@@ -18,7 +18,6 @@ const COMPANIES = [
   { name: "DigitalOcean", ats: "greenhouse", slug: "digitalocean98" },
   { name: "Razorpay", ats: "greenhouse", slug: "razorpaysoftwareprivatelimited" },
   { name: "Groww", ats: "greenhouse", slug: "groww", eu: true },
-  { name: "Postman", ats: "greenhouse", slug: "postman" },
   { name: "Stripe", ats: "greenhouse", slug: "stripe" },
   { name: "Airbnb", ats: "greenhouse", slug: "airbnb" },
   { name: "Coinbase", ats: "greenhouse", slug: "coinbase" },
@@ -53,7 +52,6 @@ const COMPANIES = [
   { name: "PayPal", ats: "workday", host: "paypal.wd1.myworkdayjobs.com", tenant: "paypal", site: "jobs" },
   { name: "Adobe", ats: "workday", host: "adobe.wd5.myworkdayjobs.com", tenant: "adobe", site: "external_experienced" },
   { name: "Salesforce", ats: "workday", host: "salesforce.wd12.myworkdayjobs.com", tenant: "salesforce", site: "External_Career_Site" },
-  { name: "Walmart", ats: "workday", host: "walmart.wd5.myworkdayjobs.com", tenant: "walmart", site: "WalmartExternal" },
 ];
 
 // ───────────── EDIT THIS: what counts as a match ─────────────
@@ -132,6 +130,7 @@ const fetchers = {
           title: p.title,
           location: p.locationsText ?? "",
           url: `https://${c.host}/en-US/${c.site}${p.externalPath}`,
+          detail: `https://${c.host}/wday/cxs/${c.tenant}/${c.site}${p.externalPath}`,
         });
       }
       if (out.length >= total) break;
@@ -226,6 +225,23 @@ results.forEach((r, i) => {
 });
 
 // Send first, save after: if Discord fails, nothing is marked seen and we retry next run.
-if (fresh.length) await notify(fresh);
+// Workday hides multi-location jobs behind "N Locations": look up the real list, drop non-India ones.
+const toSend = [];
+for (const j of fresh) {
+  if (j.detail && /^\d+ locations?$/i.test(j.location)) {
+    try {
+      const d = (await getJson(j.detail)).jobPostingInfo ?? {};
+      const all = [d.location, ...(d.additionalLocations ?? []), d.country?.descriptor].filter(Boolean);
+      if (all.length) {
+        if (!all.some(locationOk)) continue;
+        j.location = all.filter((l) => l !== d.country?.descriptor).join(" · ").slice(0, 200);
+      }
+    } catch {
+      /* lookup failed: send it as is */
+    }
+  }
+  toSend.push(j);
+}
+if (toSend.length) await notify(toSend);
 await saveState(state);
-console.log(`Done. ${fresh.length} new matching job(s).`);
+console.log(`Done. ${toSend.length} new matching job(s).`);
