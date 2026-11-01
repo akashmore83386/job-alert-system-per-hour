@@ -2,8 +2,13 @@ name: job-alerts
 
 on:
   schedule:
-    - cron: "0 * * * *"
-  workflow_dispatch:
+    - cron: "0 * * * *" # every hour, on the hour (UTC). Use "*/15 * * * *" for every 15 min
+  workflow_dispatch: # lets you run it manually from the Actions tab
+    inputs:
+      test:
+        description: "Send a test message to Discord"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -26,6 +31,7 @@ jobs:
         run: node watch.mjs
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TEST_ALERT: ${{ inputs.test && '1' || '' }}
 
       - name: Save seen jobs
         run: |
