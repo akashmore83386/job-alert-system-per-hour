@@ -2,7 +2,7 @@ name: job-alerts
 
 on:
   schedule:
-    - cron: "0 * * * *" # every hour, on the hour (UTC). Use "*/15 * * * *" for every 15 min
+    - cron: "*/15 * * * *" # every hour, on the hour (UTC). Use "*/15 * * * *" for every 15 min
   workflow_dispatch: # lets you run it manually from the Actions tab
     inputs:
       test:
