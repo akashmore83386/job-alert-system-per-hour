@@ -43,7 +43,6 @@ const COMPANIES = [
   // Lever
   { name: "CRED", ats: "lever", slug: "cred" },
   { name: "Zeta", ats: "lever", slug: "zeta" },
-  { name: "Plaid", ats: "lever", slug: "plaid" },
   { name: "Palantir", ats: "lever", slug: "palantir" },
   // Ashby
   { name: "OpenAI", ats: "ashby", slug: "openai" },
@@ -68,14 +67,24 @@ const REMOTE_NO = /(\bus\b|\busa\b|united states|canada|\buk\b|united kingdom|eu
 // ───────────── fetchers: each returns [{id,title,location,url}] ─────────────
 const fetchers = {
   async greenhouse(c) {
-    const host = c.eu ? "boards-api.eu.greenhouse.io" : "boards-api.greenhouse.io";
-    const r = await getJson(`https://${host}/v1/boards/${c.slug}/jobs`);
-    return r.jobs.map((j) => ({
-      id: String(j.id),
-      title: j.title,
-      location: j.location?.name ?? "",
-      url: j.absolute_url,
-    }));
+    const hosts = c.eu
+      ? ["boards-api.eu.greenhouse.io", "boards-api.greenhouse.io"]
+      : ["boards-api.greenhouse.io", "boards-api.eu.greenhouse.io"];
+    const errs = [];
+    for (const host of hosts) {
+      try {
+        const r = await getJson(`https://${host}/v1/boards/${c.slug}/jobs`);
+        return r.jobs.map((j) => ({
+          id: String(j.id),
+          title: j.title,
+          location: j.location?.name ?? "",
+          url: j.absolute_url,
+        }));
+      } catch (e) {
+        errs.push(e.message);
+      }
+    }
+    throw new Error(errs.join(" | "));
   },
 
   async lever(c) {
@@ -101,12 +110,20 @@ const fetchers = {
   async workday(c) {
     const api = `https://${c.host}/wday/cxs/${c.tenant}/${c.site}/jobs`;
     const out = [];
-    for (let offset = 0; offset < 100; offset += 20) {
-      const r = await getJson(api, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: c.search ?? "software" }),
-      });
+    let total = Infinity;
+    for (let offset = 0; offset < 300; offset += 20) {
+      let r;
+      try {
+        r = await getJson(api, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: c.search ?? "software" }),
+        });
+      } catch (e) {
+        if (offset === 0) throw e;
+        break; // a later page failed: keep what we already have
+      }
+      if (offset === 0) total = r.total ?? Infinity; // Workday only reports total on page 1
       const posts = r.jobPostings ?? [];
       if (!posts.length) break;
       for (const p of posts) {
@@ -117,6 +134,7 @@ const fetchers = {
           url: `https://${c.host}/en-US/${c.site}${p.externalPath}`,
         });
       }
+      if (out.length >= total) break;
     }
     return out;
   },
@@ -124,11 +142,16 @@ const fetchers = {
 
 // ───────────── helpers ─────────────
 async function getJson(url, opts = {}) {
-  const res = await fetch(url, {
-    ...opts,
-    signal: AbortSignal.timeout(20_000),
-    headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (job-watch)", ...opts.headers },
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      ...opts,
+      signal: AbortSignal.timeout(20_000),
+      headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (job-watch)", ...opts.headers },
+    });
+  } catch (e) {
+    throw new Error(`${e.cause?.code ?? e.cause?.message ?? e.message} ${url}`);
+  }
   if (!res.ok) throw new Error(`${res.status} ${url}`);
   return res.json();
 }
@@ -176,6 +199,10 @@ async function notify(jobs) {
 }
 
 // ───────────── main ─────────────
+if (process.env.TEST_ALERT) {
+  await notify([{ company: "Job watcher", title: "Test alert: Discord is connected", location: "New jobs will show up like this", url: "https://github.com" }]);
+}
+
 const state = await loadState();
 const fresh = [];
 
